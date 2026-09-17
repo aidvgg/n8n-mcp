@@ -13,8 +13,6 @@ if (process.env.DOTENV_CONFIG_PATH) {
 }
 
 import { createHash, timingSafeEqual } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { rateLimit } from "express-rate-limit";
@@ -543,17 +541,9 @@ async function main(): Promise<void> {
   }
 }
 
-/** True only when this file was launched directly, so tests can import it safely. */
-function isEntrypoint(): boolean {
-  try {
-    const argv1 = process.argv[1];
-    return !!argv1 && pathToFileURL(realpathSync(argv1)).href === import.meta.url;
-  } catch {
-    return false;
-  }
-}
-
-if (isEntrypoint()) {
+// Start on import as well as on direct launch: serverless hosts import this module
+// instead of executing it. Only the test runner (NODE_ENV=test) imports without starting.
+if (config.nodeEnv !== "test") {
   main().catch((error) => {
     serverLogger.fatal({ error: error.message }, "Fatal error during startup");
     process.exit(1);
