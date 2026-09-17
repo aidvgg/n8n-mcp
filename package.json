@@ -1,6 +1,7 @@
 {
   "name": "n8n-mcp-server",
   "version": "1.5.0",
+  "license": "MIT",
   "type": "module",
   "main": "dist/server.js",
   "bin": {
