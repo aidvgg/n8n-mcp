@@ -1,5 +1,7 @@
 # n8n-mcp
 
+[![CI](https://github.com/aidvgg/n8n-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/aidvgg/n8n-mcp/actions/workflows/ci.yml)
+
 A Model Context Protocol (MCP) server that gives AI assistants full control over [n8n](https://n8n.io) — listing, creating, executing, validating, and self-healing workflows through a single typed interface.
 
 Built on the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) and the n8n public API. Runs over Streamable HTTP (for remote clients like Claude, Cursor, VS Code) or stdio (for local desktop clients).
@@ -9,17 +11,17 @@ Built on the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typesc
 ## Features
 
 - **29 typed tools** spanning workflow management, execution, diagnostics, node intelligence, templates, and validation.
-- **Pre-creation validation** — `validate_workflow` checks node types, required parameters, connection integrity, duplicate names, orphan nodes, credentials, and typeVersion mismatches before anything hits n8n.
-- **Self-healing loop** — `self_heal_workflow` executes a workflow, diagnoses failures, and returns concrete fix suggestions the agent can apply via `update_workflow`.
+- **Pre-creation validation** - `validate_workflow` checks node types, required parameters, connection integrity, duplicate names, orphan nodes, credentials, and typeVersion mismatches before anything hits n8n.
+- **Self-healing loop** - `self_heal_workflow` executes a workflow, diagnoses failures, and returns concrete fix suggestions the agent can apply via `update_workflow`.
 - **Node catalogue** kept in sync with n8n `nodes-base` v2.14.0, including current `typeVersion` values for HTTP Request, Postgres, Slack, Gmail, OpenAI, and the newer AI nodes (AI Transform, Data Table, Guardrails, Evaluation, MCP Server Trigger).
-- **Golden-path examples** — annotated workflow templates for common patterns (webhook-transform-respond, schedule-fetch-filter-notify, error handling, batch loops).
-- **HTTP server hardening** — CORS allow-listing, rate limiting, security headers, structured logging via pino, and graceful shutdown.
-- **Cloud client** — a tiny CLI that talks to a remote MCP endpoint over curl, for environments where `claude mcp add` is unavailable.
+- **Golden-path examples** - annotated workflow templates for common patterns (webhook-transform-respond, schedule-fetch-filter-notify, error handling, batch loops).
+- **HTTP server hardening** - CORS allow-listing, rate limiting, security headers, structured logging via pino, and graceful shutdown.
+- **Cloud client** - a tiny CLI that talks to a remote MCP endpoint over curl, for environments where `claude mcp add` is unavailable.
 
 ## Quick start
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/aidvgg/n8n-mcp.git
 cd n8n-mcp
 npm install
 npm run build
@@ -149,12 +151,12 @@ The default URL can be overridden with the `MCP_SERVER_URL` environment variable
 
 ## Recommended workflow development cycle
 
-1. `list_workflow_examples` — find a similar pattern
-2. `get_node_schema` — confirm parameters for each node
-3. `validate_workflow` — verify the definition before creation
-4. `create_workflow` — deploy it
-5. `self_heal_workflow` — execute and collect fix suggestions
-6. `update_workflow` — apply the fixes
+1. `list_workflow_examples` - find a similar pattern
+2. `get_node_schema` - confirm parameters for each node
+3. `validate_workflow` - verify the definition before creation
+4. `create_workflow` - deploy it
+5. `self_heal_workflow` - execute and collect fix suggestions
+6. `update_workflow` - apply the fixes
 7. Repeat 5–6 until every node passes
 
 ## Configuration
