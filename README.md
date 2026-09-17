@@ -5,9 +5,6 @@ A Model Context Protocol (MCP) server that gives AI assistants full control over
 Built on the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) and the n8n public API. Runs over Streamable HTTP (for remote clients like Claude, Cursor, VS Code) or stdio (for local desktop clients).
 
 
-## Status
-
-Engineering sample / MCP integration for n8n. See also [STATUS.md](./STATUS.md). Suitable for careful self-hosting — **not** a claim of production SLAs, multi-tenant SaaS, or live client outcomes.
 
 ## Features
 
@@ -16,7 +13,7 @@ Engineering sample / MCP integration for n8n. See also [STATUS.md](./STATUS.md).
 - **Self-healing loop** — `self_heal_workflow` executes a workflow, diagnoses failures, and returns concrete fix suggestions the agent can apply via `update_workflow`.
 - **Node catalogue** kept in sync with n8n `nodes-base` v2.14.0, including current `typeVersion` values for HTTP Request, Postgres, Slack, Gmail, OpenAI, and the newer AI nodes (AI Transform, Data Table, Guardrails, Evaluation, MCP Server Trigger).
 - **Golden-path examples** — annotated workflow templates for common patterns (webhook-transform-respond, schedule-fetch-filter-notify, error handling, batch loops).
-- **HTTP server hardening** — CORS allow-listing, rate limiting, security headers, structured logging via pino, and graceful shutdown (engineering sample; not a production-SLA claim).
+- **HTTP server hardening** — CORS allow-listing, rate limiting, security headers, structured logging via pino, and graceful shutdown.
 - **Cloud client** — a tiny CLI that talks to a remote MCP endpoint over curl, for environments where `claude mcp add` is unavailable.
 
 ## Quick start
