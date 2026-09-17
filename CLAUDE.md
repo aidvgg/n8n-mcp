@@ -6,7 +6,11 @@ This project includes a cloud client for calling n8n MCP tools from Claude Cloud
 
 ```bash
 npm run build
+export MCP_AUTH_TOKEN=your-token-here
 ```
+
+The remote endpoint requires a bearer token. `MCP_AUTH_TOKEN` must be set or the cloud client exits
+with an error, and the server answers 401. Generate a token with `openssl rand -hex 32`.
 
 ## Usage
 

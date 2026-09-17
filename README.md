@@ -32,6 +32,7 @@ Create a `.env` file:
 ```env
 N8N_API_URL=https://your-n8n-instance.example.com/api/v1
 N8N_API_KEY=your-api-key-here
+MCP_AUTH_TOKEN=generate-with-openssl-rand-hex-32
 PORT=3000
 NODE_ENV=development
 ALLOWED_ORIGINS=https://claude.ai,https://cursor.sh
@@ -45,7 +46,13 @@ npm run start:stdio # stdio mode for local desktop clients
 npm run dev         # watch mode (bun)
 ```
 
-Health check:
+Generate the HTTP transport token once and keep it secret:
+
+```bash
+openssl rand -hex 32
+```
+
+Health check (the only endpoint that needs no token):
 
 ```bash
 curl http://localhost:3000/health
@@ -55,15 +62,32 @@ curl http://localhost:3000/health
 
 ### Claude Code, Cursor, VS Code (Streamable HTTP)
 
-Point your client at `http://localhost:3000/mcp` (or your deployed URL). For Claude Code:
+In HTTP mode every `/mcp` and `/docs` request must carry `Authorization: Bearer $MCP_AUTH_TOKEN`.
+Requests without a valid token get 401, and a server started without `MCP_AUTH_TOKEN` answers 503
+on those routes. Point your client at `http://localhost:3000/mcp` (or your deployed URL). For Claude Code:
 
 ```bash
-claude mcp add n8n https://your-deployment.example.com/mcp
+claude mcp add --transport http n8n https://your-deployment.example.com/mcp \
+  --header "Authorization: Bearer $MCP_AUTH_TOKEN"
+```
+
+For clients configured through JSON, add the same header:
+
+```json
+{
+  "mcpServers": {
+    "n8n": {
+      "type": "http",
+      "url": "https://your-deployment.example.com/mcp",
+      "headers": { "Authorization": "Bearer your-token-here" }
+    }
+  }
+}
 ```
 
 ### Claude Desktop (stdio)
 
-In `claude_desktop_config.json`:
+stdio mode runs as a local child process and needs no token. In `claude_desktop_config.json`:
 
 ```json
 {
@@ -85,12 +109,14 @@ In `claude_desktop_config.json`:
 Use the bundled cloud client to call tools directly:
 
 ```bash
+export MCP_AUTH_TOKEN=your-token-here
 node dist/cloud-client.js https://your-deployment.example.com/mcp list-tools
 node dist/cloud-client.js https://your-deployment.example.com/mcp call list_workflows '{}'
 node dist/cloud-client.js https://your-deployment.example.com/mcp call execute_workflow '{"workflowId":"123"}'
 ```
 
-The default URL can be overridden with the `MCP_SERVER_URL` environment variable.
+The default URL can be overridden with the `MCP_SERVER_URL` environment variable. `MCP_AUTH_TOKEN`
+is required; the client sends it as the bearer token.
 
 ## Available tools
 
@@ -165,6 +191,7 @@ The default URL can be overridden with the `MCP_SERVER_URL` environment variable
 |----------|---------|-------------|
 | `N8N_API_URL` | `http://localhost:5678/api/v1` | n8n REST API base URL |
 | `N8N_API_KEY` | _(required)_ | n8n API key |
+| `MCP_AUTH_TOKEN` | _(required in HTTP mode)_ | Bearer token for `/mcp` and `/docs`. Minimum 32 characters; without it those routes return 503. Not used in stdio mode. |
 | `PORT` | `3000` | HTTP server port |
 | `NODE_ENV` | `development` | In `production`, CORS requires `ALLOWED_ORIGINS` |
 | `ALLOWED_ORIGINS` | _(empty)_ | Comma-separated CORS allow-list |
@@ -176,10 +203,10 @@ The default URL can be overridden with the `MCP_SERVER_URL` environment variable
 
 | Path | Method | Purpose |
 |------|--------|---------|
-| `/mcp` | POST | MCP JSON-RPC (Streamable HTTP) |
-| `/mcp` | DELETE | Session cleanup acknowledgment |
-| `/health` | GET | Liveness check with uptime and n8n target |
-| `/docs` | GET | Markdown reference designed for AI agents calling the server via curl |
+| `/mcp` | POST | MCP JSON-RPC (Streamable HTTP). Bearer token required. |
+| `/mcp` | DELETE | Session cleanup acknowledgment. Bearer token required. |
+| `/health` | GET | Liveness check with status, mode, version and uptime. No token. |
+| `/docs` | GET | Markdown reference for AI agents calling the server via curl. Bearer token required. |
 
 ## Development
 

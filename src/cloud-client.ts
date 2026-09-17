@@ -20,7 +20,8 @@ function usage(): never {
   cloud-client [url] list-tools
   cloud-client [url] call <tool_name> ['<json_args>']
 
-URL defaults to MCP_SERVER_URL env var or ${DEFAULT_URL}`);
+URL defaults to MCP_SERVER_URL env var or ${DEFAULT_URL}
+MCP_AUTH_TOKEN must be set; it is sent as an Authorization: Bearer header.`);
   process.exit(1);
 }
 
@@ -39,8 +40,14 @@ function mcpRequest(url: string, method: string, params: Record<string, unknown>
     params,
   });
 
+  const token = process.env.MCP_AUTH_TOKEN || "";
+  if (!token) {
+    throw new Error("MCP_AUTH_TOKEN is not set, and the remote MCP endpoint requires a bearer token");
+  }
+  const quoted = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+
   const output = execSync(
-    `curl -s -X POST '${url}' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '${body.replace(/'/g, "'\\''")}'`,
+    `curl -s -X POST ${quoted(url)} -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H ${quoted(`Authorization: Bearer ${token}`)} -d ${quoted(body)}`,
     { encoding: "utf-8", timeout: 60000 }
   );
 
