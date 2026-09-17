@@ -2,10 +2,11 @@
 
 [![CI](https://github.com/aidvgg/n8n-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/aidvgg/n8n-mcp/actions/workflows/ci.yml)
 
-A Model Context Protocol (MCP) server that gives AI assistants full control over [n8n](https://n8n.io) — listing, creating, executing, validating, and self-healing workflows through a single typed interface.
+Lets an AI assistant build, run and fix [n8n](https://n8n.io) automations for you.
+
+Connect it to Claude, Cursor or VS Code and describe the automation you want. The assistant gets 29 typed tools: it checks a workflow against a catalogue of 300+ n8n nodes before creating it, runs it, reads the failure when a step breaks, and gets back concrete fix suggestions it can apply. The checking happens before anything touches your n8n instance.
 
 Built on the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) and the n8n public API. Runs over Streamable HTTP (for remote clients like Claude, Cursor, VS Code) or stdio (for local desktop clients).
-
 
 
 ## Features
