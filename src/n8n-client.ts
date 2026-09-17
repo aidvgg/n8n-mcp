@@ -238,12 +238,14 @@ export class N8nClient {
   async listWorkflows(params?: {
     active?: boolean;
     tags?: string;
+    name?: string;
     cursor?: string;
     limit?: number;
   }): Promise<PaginatedResponse<Workflow>> {
     const query = new URLSearchParams();
     if (params?.active !== undefined) query.set("active", String(params.active));
     if (params?.tags) query.set("tags", params.tags);
+    if (params?.name) query.set("name", params.name);
     if (params?.cursor) query.set("cursor", params.cursor);
     if (params?.limit) query.set("limit", String(params.limit));
 

@@ -621,7 +621,7 @@ export function registerTools(server: McpServer, n8nClient: N8nClient): void {
     },
     async ({ active, tags, name, limit }) => {
       try {
-        const result = await n8nClient.listWorkflows({ active, tags, limit });
+        const result = await n8nClient.listWorkflows({ active, tags, name, limit });
         return {
           content: [{ type: "text", text: JSON.stringify(result.data, null, 2) }],
         };
