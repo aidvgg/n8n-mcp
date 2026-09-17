@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-09-17
+
+### Security
+- **Breaking:** the HTTP transport now requires a bearer token. Set `MCP_AUTH_TOKEN` (at least 32 characters, e.g. `openssl rand -hex 32`) and send `Authorization: Bearer <token>` on every `/mcp` and `/docs` request. Previously both endpoints were anonymous, so any caller who could reach the server could run all 29 tools, including `delete_workflow` and `execute_workflow`, using the n8n API key held server-side.
+- Fails closed: if `MCP_AUTH_TOKEN` is unset or shorter than 32 characters, `/mcp` and `/docs` return 503 and the server logs a warning at startup. There is no unauthenticated mode.
+- Tokens are compared with `crypto.timingSafeEqual` over SHA-256 digests, so the comparison is constant time and does not leak token length.
+- `/health` is unchanged and stays unauthenticated.
+- stdio mode is unchanged and needs no token.
+- `Authorization` added to the CORS allowed-headers list.
+- `cloud-client` sends `MCP_AUTH_TOKEN` as the bearer token and errors if it is not set.
+
+### Changed
+- `createApp()` and `createAuthMiddleware()` are exported and the server only auto-starts when run as the entrypoint, so the HTTP routes can be tested in process.
+- Server tests now start the real app on an ephemeral port instead of silently skipping when nothing is listening on port 3000.
+
 ## [1.5.0] - 2026-03-27
 
 ### Updated
