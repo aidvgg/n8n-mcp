@@ -57,6 +57,11 @@ interface MockState {
   workflows: Map<string, MockWorkflow>;
   executions: Map<string, MockExecution>;
   executionCounter: number;
+  workflowCounter: number;
+  /** Every HTTP request the fake receives, in arrival order. */
+  requests: Array<{ method: string; path: string; query: Record<string, unknown> }>;
+  /** When set, every request is answered with this status instead of the real handler. */
+  forcedStatus: number | null;
   // When a workflow is "executed", this function determines the result
   executionBehavior: (workflow: MockWorkflow) => MockExecution;
 }
@@ -69,13 +74,28 @@ export function createMockN8nServer(port: number = 0) {
     workflows: new Map(),
     executions: new Map(),
     executionCounter: 0,
+    workflowCounter: 0,
+    requests: [],
+    forcedStatus: null,
     executionBehavior: defaultExecutionBehavior,
   };
+
+  app.use((req, res, next) => {
+    state.requests.push({ method: req.method, path: req.path, query: { ...req.query } });
+    if (state.forcedStatus !== null) {
+      return res.status(state.forcedStatus).json({ message: "n8n instance failure (injected by the test fake)" });
+    }
+    next();
+  });
 
   // ============ WORKFLOW ENDPOINTS ============
 
   app.get("/api/v1/workflows", (req, res) => {
-    const workflows = Array.from(state.workflows.values());
+    let workflows = Array.from(state.workflows.values());
+    if (typeof req.query.name === "string") {
+      const wanted = req.query.name;
+      workflows = workflows.filter((w) => w.name === wanted);
+    }
     res.json({ data: workflows });
   });
 
@@ -86,7 +106,8 @@ export function createMockN8nServer(port: number = 0) {
   });
 
   app.post("/api/v1/workflows", (req, res) => {
-    const id = `wf-${Date.now()}`;
+    state.workflowCounter++;
+    const id = `wf-${state.workflowCounter}`;
     const workflow: MockWorkflow = {
       id,
       name: req.body.name,
@@ -188,6 +209,11 @@ export function createMockN8nServer(port: number = 0) {
   app.get("/api/v1/variables", (_req, res) => res.json({ data: [] }));
   app.post("/api/v1/audit", (_req, res) => res.json({ risk: "low" }));
 
+  // Webhook endpoints live outside /api/v1, mirroring a real n8n instance.
+  app.post("/webhook/:path", (req, res) => {
+    res.json({ received: req.body, webhookPath: req.params.path });
+  });
+
   // ============ SERVER LIFECYCLE ============
 
   let server: Server;
@@ -241,6 +267,21 @@ export function createMockN8nServer(port: number = 0) {
     /** Reset to default (all nodes succeed) */
     resetExecutionBehavior() {
       state.executionBehavior = defaultExecutionBehavior;
+    },
+
+    /** Requests the fake has received since the last clearRequests() call */
+    get requests() {
+      return state.requests;
+    },
+
+    /** Forget the recorded request log, so a test can assert "no HTTP happened" */
+    clearRequests() {
+      state.requests.length = 0;
+    },
+
+    /** Answer every subsequent request with this status; null restores normal behavior */
+    setForcedStatus(status: number | null) {
+      state.forcedStatus = status;
     },
 
     /** Add a workflow directly to the mock state */

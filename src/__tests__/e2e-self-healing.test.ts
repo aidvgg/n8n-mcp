@@ -1,126 +1,163 @@
 /**
- * E2E tests: Full self-healing workflow lifecycle.
+ * E2E tests: the self-healing lifecycle driven entirely through the MCP tools.
  *
- * Tests the complete cycle through MCP tools:
- *   create_workflow → execute_workflow → diagnose_execution → self_heal_workflow
+ * Every step below is an MCP tools/call on a real McpServer that registerTools
+ * populated, sent over the SDK's in-memory transport by a real MCP Client. The
+ * N8nClient behind the tools talks to an in-process fake n8n HTTP server, so the
+ * assertions are on the text each tool handler actually returns to a client:
  *
- * Uses a real mock n8n API server, real N8nClient, and real MCP tool handlers.
+ *   create_workflow -> execute_workflow -> diagnose_execution -> self_heal_workflow
+ *     -> update_workflow -> self_heal_workflow (verify)
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { N8nClient } from "../n8n-client.js";
-import { registerTools } from "../tools.js";
-import { createMockN8nServer, type MockExecution } from "./mock-n8n-server.js";
+import {
+  createMcpHarness,
+  type McpHarness,
+  type MockN8nServer,
+} from "./mcp-harness.js";
+import type { MockExecution, MockWorkflow } from "./mock-n8n-server.js";
 
-/**
- * Helper: Call an MCP tool directly and return its text content.
- * This bypasses the transport layer and calls the tool handler directly.
- */
-async function callTool(
-  client: N8nClient,
-  toolName: string,
-  args: Record<string, unknown>
-): Promise<{ text: string; isError?: boolean }> {
-  // We create a fresh MCP server for each call (matches stateless HTTP mode)
-  const server = new McpServer({ name: "test", version: "1.0.0" });
-  registerTools(server, client);
+let harness: McpHarness;
+let mock: MockN8nServer;
 
-  // Access internal tool registry
-  const serverAny = server as unknown as {
-    _registeredTools: Map<
-      string,
-      { callback: (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }>; isError?: boolean }> }
-    >;
-  };
-
-  const tool = serverAny._registeredTools?.get(toolName);
-  if (!tool) {
-    throw new Error(`Tool "${toolName}" not found. Available: ${Array.from(serverAny._registeredTools?.keys() || []).join(", ")}`);
-  }
-
-  const result = await tool.callback(args);
-  return {
-    text: result.content.map((c) => c.text).join("\n"),
-    isError: result.isError,
-  };
+/** Read the workflow id out of the create_workflow tool's text response. */
+function workflowIdFrom(text: string): string {
+  const match = text.match(/^ID: (\S+)$/m);
+  if (!match) throw new Error(`No workflow ID in create_workflow output:\n${text}`);
+  return match[1];
 }
 
-describe("E2E: Self-Healing Workflow Lifecycle", () => {
-  const mockServer = createMockN8nServer();
-  let client: N8nClient;
+/** Read the execution id out of a self-heal report. */
+function executionIdFrom(text: string): string {
+  const match = text.match(/^- Execution ID: (\S+)$/m);
+  if (!match) throw new Error(`No execution ID in report:\n${text}`);
+  return match[1];
+}
 
-  beforeAll(async () => {
-    const { baseUrl } = await mockServer.start();
-    client = new N8nClient(baseUrl, "test-key", {
-      timeout: 10000,
-      maxRetries: 1,
-      retryDelay: 100,
-    });
+function failingExecution(
+  execId: string,
+  failedNode: string,
+  error: { message: string; description?: string; stack?: string }
+) {
+  return (workflow: MockWorkflow): MockExecution => ({
+    id: execId,
+    finished: true,
+    mode: "manual",
+    startedAt: new Date().toISOString(),
+    stoppedAt: new Date().toISOString(),
+    workflowId: workflow.id,
+    status: "error",
+    retryOf: null,
+    retrySuccessId: null,
+    data: {
+      resultData: {
+        runData: Object.fromEntries(
+          workflow.nodes.map((node) => [
+            node.name,
+            [
+              node.name === failedNode
+                ? { startTime: Date.now(), executionTime: 120, error }
+                : {
+                    startTime: Date.now(),
+                    executionTime: 3,
+                    data: { main: [[{ json: { ok: true } }]] },
+                  },
+            ],
+          ])
+        ),
+        lastNodeExecuted: failedNode,
+        error: { message: error.message },
+      },
+    },
   });
+}
 
-  afterAll(async () => {
-    await mockServer.stop();
-  });
+beforeAll(async () => {
+  harness = await createMcpHarness();
+  mock = harness.mock;
+});
 
-  beforeEach(() => {
-    mockServer.resetExecutionBehavior();
-  });
+afterAll(async () => {
+  await harness.stop();
+});
 
-  describe("Happy path: workflow succeeds", () => {
+beforeEach(() => {
+  mock.resetExecutionBehavior();
+});
+
+describe("E2E: self-healing lifecycle through the MCP tools", () => {
+  describe("Happy path: the workflow succeeds", () => {
     let workflowId: string;
+    let executionId: string;
 
-    it("Step 1: create_workflow", async () => {
-      const result = await client.createWorkflow({
+    it("Step 1: create_workflow returns an inactive workflow with an id", async () => {
+      const result = await harness.callTool("create_workflow", {
         name: "E2E Happy Path",
         nodes: [
-          { name: "Manual Trigger", type: "n8n-nodes-base.manualTrigger", position: [250, 300] as [number, number], parameters: {} },
-          { name: "Set Data", type: "n8n-nodes-base.set", position: [450, 300] as [number, number], parameters: { mode: "manual" } },
+          { name: "Manual Trigger", type: "n8n-nodes-base.manualTrigger", position: [250, 300], parameters: {} },
+          { name: "Set Data", type: "n8n-nodes-base.set", position: [450, 300], parameters: { mode: "manual" } },
         ],
         connections: { "Manual Trigger": { main: [[{ node: "Set Data", type: "main", index: 0 }]] } },
         settings: { executionOrder: "v1" },
       });
 
-      workflowId = result.id;
-      expect(workflowId).toBeTruthy();
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain("Workflow created successfully!");
+      expect(result.text).toContain("Name: E2E Happy Path");
+      expect(result.text).toContain("Active: false");
+
+      workflowId = workflowIdFrom(result.text);
+      expect(mock.state.workflows.get(workflowId)!.nodes).toHaveLength(2);
     });
 
-    it("Step 2: execute_workflow succeeds with per-node data", async () => {
-      const { executionId } = await client.executeWorkflow(workflowId);
-      const execution = await client.waitForExecution(executionId, { timeoutMs: 5000 });
+    it("Step 2: execute_workflow reports both nodes running successfully", async () => {
+      const result = await harness.callTool("execute_workflow", { workflowId });
 
-      expect(execution.status).toBe("success");
-      expect(execution.finished).toBe(true);
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain("Status: success");
+      expect(result.text).toContain("Nodes executed: 2");
+      expect(result.text).toMatch(/\[success\] Manual Trigger \(\d+ms\)/);
+      expect(result.text).toMatch(/\[success\] Set Data \(\d+ms\)/);
+      expect(result.text).toContain("output[0]: 1 items");
 
-      // Verify per-node data
-      const resultData = execution.data as Record<string, unknown>;
-      const runData = (resultData.resultData as Record<string, unknown>).runData as Record<string, unknown>;
-      expect(Object.keys(runData)).toContain("Manual Trigger");
-      expect(Object.keys(runData)).toContain("Set Data");
+      const executionIdMatch = result.text.match(/^Execution ID: (\S+)$/m);
+      expect(executionIdMatch).not.toBeNull();
+      executionId = executionIdMatch![1];
     });
 
-    it("Step 3: diagnose_execution shows all passed", async () => {
-      const { executionId } = await client.executeWorkflow(workflowId);
-      const execution = await client.getExecution(executionId, true);
+    it("Step 3: diagnose_execution shows every node passed and none failed", async () => {
+      const result = await harness.callTool("diagnose_execution", { executionId });
 
-      // Verify the execution data structure is correct for diagnosis
-      expect(execution.data).toBeTruthy();
-      expect(execution.status).toBe("success");
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain("### Summary");
+      expect(result.text).toContain("- Passed: 2 nodes (Manual Trigger, Set Data)");
+      expect(result.text).toContain("- Failed: 0 nodes (none)");
+      expect(result.text).not.toContain("### FAILED");
+    });
+
+    it("Step 4: self_heal_workflow reports no fixes needed", async () => {
+      const result = await harness.callTool("self_heal_workflow", { workflowId });
+
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain("# Self-Heal Report: E2E Happy Path (ALL NODES PASSED)");
+      expect(result.text).toContain("- Status: success");
+      expect(result.text).toContain("## Fix Plan\nNo fixes needed - all nodes executed successfully.");
     });
   });
 
-  describe("Failure path: node error → diagnose → fix → succeed", () => {
+  describe("Failure path: node error, diagnose, fix, succeed", () => {
     let workflowId: string;
-    let failExecId: string;
+    let failedExecutionId: string;
 
-    it("Step 1: create_workflow with a bad node", async () => {
-      const result = await client.createWorkflow({
+    it("Step 1: create_workflow deploys a Slack node with no credentials", async () => {
+      const result = await harness.callTool("create_workflow", {
         name: "E2E Failure Recovery",
         nodes: [
-          { name: "Trigger", type: "n8n-nodes-base.manualTrigger", position: [250, 300] as [number, number], parameters: {} },
+          { name: "Trigger", type: "n8n-nodes-base.manualTrigger", position: [250, 300], parameters: {} },
           {
             name: "Slack Post",
             type: "n8n-nodes-base.slack",
-            position: [450, 300] as [number, number],
+            position: [450, 300],
             parameters: { channel: "#general", text: "Hello" },
           },
         ],
@@ -128,179 +165,133 @@ describe("E2E: Self-Healing Workflow Lifecycle", () => {
         settings: { executionOrder: "v1" },
       });
 
-      workflowId = result.id;
+      expect(result.isError).toBe(false);
+      workflowId = workflowIdFrom(result.text);
     });
 
-    it("Step 2: execute fails at Slack node (missing credentials)", async () => {
-      // Configure mock to fail at Slack
-      mockServer.setExecutionBehavior((workflow) => ({
-        id: `exec-cred-${Date.now()}`,
-        finished: true,
-        mode: "manual",
-        startedAt: new Date().toISOString(),
-        stoppedAt: new Date().toISOString(),
-        workflowId: workflow.id,
-        status: "error",
-        retryOf: null,
-        retrySuccessId: null,
-        data: {
-          resultData: {
-            runData: {
-              Trigger: [{ startTime: Date.now(), executionTime: 3, data: { main: [[{ json: {} }]] } }],
-              "Slack Post": [
-                {
-                  startTime: Date.now(),
-                  executionTime: 120,
-                  error: {
-                    message: "No credentials found for 'slackOAuth2Api'",
-                    description: "Node requires authentication credentials that have not been configured.",
-                  },
-                },
-              ],
-            },
-            lastNodeExecuted: "Slack Post",
-            error: { message: "Credential error at Slack Post" },
-          },
-        },
-      }));
+    it("Step 2: self_heal_workflow reports the credential failure with a fix plan", async () => {
+      mock.setExecutionBehavior(
+        failingExecution("exec-e2e-cred", "Slack Post", {
+          message: "No credentials found for 'slackOAuth2Api'",
+          description: "Node requires authentication credentials that have not been configured.",
+        })
+      );
 
-      const { executionId } = await client.executeWorkflow(workflowId);
-      failExecId = executionId;
-      const execution = await client.waitForExecution(executionId, { timeoutMs: 5000 });
+      const result = await harness.callTool("self_heal_workflow", { workflowId });
 
-      expect(execution.status).toBe("error");
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain("# Self-Heal Report: E2E Failure Recovery (ISSUES FOUND)");
+      expect(result.text).toContain("- Status: error");
+      expect(result.text).toContain("### FAILED: Slack Post");
+      expect(result.text).toContain("- Error: No credentials found for 'slackOAuth2Api'");
+      expect(result.text).toContain("Classification: CREDENTIALS_MISSING");
+      expect(result.text).toContain("- Passed: 1 nodes (Trigger)");
+      expect(result.text).toContain("- Failed: 1 nodes (Slack Post)");
+
+      // The fix plan has to name the node, the action, and the credential type.
+      expect(result.text).toContain("1 node(s) need fixes:");
+      expect(result.text).toContain("### Slack Post (n8n-nodes-base.slack)");
+      expect(result.text).toContain("**Fix**: Add or update credentials for this node.");
+      expect(result.text).toContain("3. Required credential types: slackApi");
+      expect(result.text).toContain("1. Apply fixes using update_workflow");
+
+      failedExecutionId = executionIdFrom(result.text);
+      expect(failedExecutionId).toBe("exec-e2e-cred");
     });
 
-    it("Step 3: diagnose identifies the credential error", async () => {
-      const execution = await client.getExecution(failExecId, true);
+    it("Step 3: diagnose_execution on the failed run repeats the root cause", async () => {
+      const result = await harness.callTool("diagnose_execution", { executionId: failedExecutionId });
 
-      // Verify the error is in the right node
-      const resultData = execution.data as Record<string, unknown>;
-      const runData = (resultData.resultData as Record<string, unknown>).runData as Record<
-        string,
-        Array<{ error?: { message: string } }>
-      >;
-
-      // Trigger passed
-      expect(runData["Trigger"][0].error).toBeUndefined();
-
-      // Slack Post failed with credential error
-      expect(runData["Slack Post"][0].error).toBeTruthy();
-      expect(runData["Slack Post"][0].error!.message).toContain("credentials");
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain("### FAILED: Slack Post");
+      expect(result.text).toContain("- Description: Node requires authentication credentials");
+      expect(result.text).toContain("Classification: CREDENTIALS_MISSING");
+      expect(result.text).toContain("- Passed: 1 nodes (Trigger)");
     });
 
-    it("Step 4: fix the workflow (simulate adding credentials)", async () => {
-      // Update the workflow to add credentials
-      const updated = await client.updateWorkflow(workflowId, {
+    it("Step 4: update_workflow applies the suggested credential fix", async () => {
+      const result = await harness.callTool("update_workflow", {
+        workflowId,
         nodes: [
-          { name: "Trigger", type: "n8n-nodes-base.manualTrigger", position: [250, 300] as [number, number], parameters: {} },
+          { name: "Trigger", type: "n8n-nodes-base.manualTrigger", position: [250, 300], parameters: {} },
           {
             name: "Slack Post",
             type: "n8n-nodes-base.slack",
-            position: [450, 300] as [number, number],
+            position: [450, 300],
             parameters: { channel: "#general", text: "Hello" },
-            credentials: { slackOAuth2Api: { id: "cred-1", name: "My Slack" } },
+            credentials: { slackApi: { id: "cred-1", name: "My Slack" } },
           },
         ],
-      } as Record<string, unknown>);
+      });
 
-      expect(updated.nodes).toHaveLength(2);
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain("Workflow updated!");
+
+      const stored = mock.state.workflows.get(workflowId)!;
+      expect(stored.nodes).toHaveLength(2);
+      expect(stored.nodes[1].credentials).toEqual({ slackApi: { id: "cred-1", name: "My Slack" } });
     });
 
-    it("Step 5: re-execute succeeds after fix", async () => {
-      // Reset mock to succeed now
-      mockServer.resetExecutionBehavior();
+    it("Step 5: self_heal_workflow verifies the fix and reports all nodes passed", async () => {
+      mock.resetExecutionBehavior();
 
-      const { executionId } = await client.executeWorkflow(workflowId);
-      const execution = await client.waitForExecution(executionId, { timeoutMs: 5000 });
+      const result = await harness.callTool("self_heal_workflow", { workflowId });
 
-      expect(execution.status).toBe("success");
-      expect(execution.finished).toBe(true);
-
-      // All nodes should have run
-      const resultData = execution.data as Record<string, unknown>;
-      const runData = (resultData.resultData as Record<string, unknown>).runData as Record<string, unknown>;
-      expect(Object.keys(runData)).toContain("Trigger");
-      expect(Object.keys(runData)).toContain("Slack Post");
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain("# Self-Heal Report: E2E Failure Recovery (ALL NODES PASSED)");
+      expect(result.text).toContain("- Status: success");
+      expect(result.text).toContain("- Passed: 2 nodes (Trigger, Slack Post)");
+      expect(result.text).toContain("- Failed: 0 nodes (none)");
+      expect(result.text).toContain("No fixes needed - all nodes executed successfully.");
     });
   });
 
-  describe("Expression error scenario", () => {
-    let workflowId: string;
-
-    it("should detect expression errors in execution", async () => {
-      const wf = await client.createWorkflow({
-        name: "Expression Error Workflow",
+  describe("Expression failure", () => {
+    it("self_heal_workflow classifies an expression error and prescribes the expression fix", async () => {
+      const created = await harness.callTool("create_workflow", {
+        name: "E2E Expression Error",
         nodes: [
-          { name: "Trigger", type: "n8n-nodes-base.manualTrigger", position: [250, 300] as [number, number], parameters: {} },
+          { name: "Trigger", type: "n8n-nodes-base.manualTrigger", position: [250, 300], parameters: {} },
           {
             name: "Set Fields",
             type: "n8n-nodes-base.set",
-            position: [450, 300] as [number, number],
-            parameters: { mode: "manual", fields: { values: [{ name: "result", stringValue: "={{ $json.nonExistentField.value }}" }] } },
+            position: [450, 300],
+            parameters: { mode: "manual" },
           },
         ],
         connections: { Trigger: { main: [[{ node: "Set Fields", type: "main", index: 0 }]] } },
         settings: { executionOrder: "v1" },
       });
-      workflowId = wf.id;
+      const workflowId = workflowIdFrom(created.text);
 
-      mockServer.setExecutionBehavior((workflow) => ({
-        id: `exec-expr-${Date.now()}`,
-        finished: true,
-        mode: "manual",
-        startedAt: new Date().toISOString(),
-        stoppedAt: new Date().toISOString(),
-        workflowId: workflow.id,
-        status: "error",
-        retryOf: null,
-        retrySuccessId: null,
-        data: {
-          resultData: {
-            runData: {
-              Trigger: [{ startTime: Date.now(), executionTime: 2, data: { main: [[{ json: {} }]] } }],
-              "Set Fields": [
-                {
-                  startTime: Date.now(),
-                  executionTime: 8,
-                  error: {
-                    message: "TypeError: Cannot read properties of undefined (reading 'value')",
-                    description: "Expression evaluation failed",
-                    stack: "TypeError: Cannot read properties of undefined\n    at Expression.eval\n    at Set.execute",
-                  },
-                },
-              ],
-            },
-            lastNodeExecuted: "Set Fields",
-            error: { message: "Expression error" },
-          },
-        },
-      }));
+      mock.setExecutionBehavior(
+        failingExecution("exec-e2e-expr", "Set Fields", {
+          message: "TypeError: Cannot read properties of undefined (reading 'value')",
+          description: "Expression evaluation failed",
+          stack: "TypeError: Cannot read properties of undefined\n    at Expression.eval\n    at Set.execute",
+        })
+      );
 
-      const { executionId } = await client.executeWorkflow(workflowId);
-      const execution = await client.getExecution(executionId, true);
+      const result = await harness.callTool("self_heal_workflow", { workflowId });
 
-      expect(execution.status).toBe("error");
-      const resultData = execution.data as Record<string, unknown>;
-      const runData = (resultData.resultData as Record<string, unknown>).runData as Record<
-        string,
-        Array<{ error?: { message: string; stack?: string } }>
-      >;
-
-      expect(runData["Set Fields"][0].error!.message).toContain("TypeError");
-      expect(runData["Set Fields"][0].error!.stack).toContain("Expression");
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain("### FAILED: Set Fields");
+      expect(result.text).toContain("Classification: EXPRESSION_ERROR");
+      expect(result.text).toContain("- Stack: TypeError: Cannot read properties of undefined");
+      expect(result.text).toContain("**Fix**: An expression references data that doesn't exist.");
+      expect(result.text).toContain("3. Add a Set node before this one to ensure required fields exist");
     });
   });
 
   describe("Multiple node failures", () => {
-    it("should capture errors from multiple failing nodes", async () => {
-      const wf = await client.createWorkflow({
-        name: "Multi-Failure Workflow",
+    it("diagnose_execution reports every failing branch and keeps the passing ones separate", async () => {
+      const created = await harness.callTool("create_workflow", {
+        name: "E2E Multi Failure",
         nodes: [
-          { name: "Trigger", type: "n8n-nodes-base.manualTrigger", position: [250, 300] as [number, number], parameters: {} },
-          { name: "IF Check", type: "n8n-nodes-base.if", position: [450, 300] as [number, number], parameters: {} },
-          { name: "Branch A", type: "n8n-nodes-base.httpRequest", position: [650, 200] as [number, number], parameters: {} },
-          { name: "Branch B", type: "n8n-nodes-base.slack", position: [650, 400] as [number, number], parameters: {} },
+          { name: "Trigger", type: "n8n-nodes-base.manualTrigger", position: [250, 300], parameters: {} },
+          { name: "IF Check", type: "n8n-nodes-base.if", position: [450, 300], parameters: {} },
+          { name: "Branch A", type: "n8n-nodes-base.httpRequest", position: [650, 200], parameters: {} },
+          { name: "Branch B", type: "n8n-nodes-base.slack", position: [650, 400], parameters: {} },
         ],
         connections: {
           Trigger: { main: [[{ node: "IF Check", type: "main", index: 0 }]] },
@@ -313,9 +304,10 @@ describe("E2E: Self-Healing Workflow Lifecycle", () => {
         },
         settings: { executionOrder: "v1" },
       });
+      const workflowId = workflowIdFrom(created.text);
 
-      mockServer.setExecutionBehavior((workflow) => ({
-        id: `exec-multi-${Date.now()}`,
+      mock.setExecutionBehavior((workflow) => ({
+        id: "exec-e2e-multi",
         finished: true,
         mode: "manual",
         startedAt: new Date().toISOString(),
@@ -327,23 +319,16 @@ describe("E2E: Self-Healing Workflow Lifecycle", () => {
         data: {
           resultData: {
             runData: {
-              Trigger: [{ startTime: Date.now(), executionTime: 2, data: { main: [[{ json: { status: "test" } }]] } }],
-              "IF Check": [{ startTime: Date.now(), executionTime: 1, data: { main: [[{ json: { status: "test" } }], [{ json: { status: "test" } }]] } }],
+              Trigger: [{ startTime: Date.now(), executionTime: 2, data: { main: [[{ json: {} }]] } }],
+              "IF Check": [{ startTime: Date.now(), executionTime: 1, data: { main: [[{ json: {} }]] } }],
               "Branch A": [
-                {
-                  startTime: Date.now(),
-                  executionTime: 5000,
-                  error: { message: "Request timed out after 5000ms" },
-                },
+                { startTime: Date.now(), executionTime: 5000, error: { message: "Request timed out after 5000ms" } },
               ],
               "Branch B": [
                 {
                   startTime: Date.now(),
                   executionTime: 50,
-                  error: {
-                    message: "401 Unauthorized - invalid_auth",
-                    description: "Authentication failed for Slack API",
-                  },
+                  error: { message: "401 Unauthorized - invalid_auth", description: "Slack auth failed" },
                 },
               ],
             },
@@ -353,34 +338,27 @@ describe("E2E: Self-Healing Workflow Lifecycle", () => {
         },
       }));
 
-      const { executionId } = await client.executeWorkflow(wf.id);
-      const execution = await client.getExecution(executionId, true);
+      await harness.callTool("execute_workflow", { workflowId });
+      const result = await harness.callTool("diagnose_execution", { executionId: "exec-e2e-multi" });
 
-      expect(execution.status).toBe("error");
-      const resultData = execution.data as Record<string, unknown>;
-      const runData = (resultData.resultData as Record<string, unknown>).runData as Record<
-        string,
-        Array<{ error?: { message: string } }>
-      >;
-
-      // Both branches failed
-      expect(runData["Branch A"][0].error!.message).toContain("timed out");
-      expect(runData["Branch B"][0].error!.message).toContain("Unauthorized");
-
-      // Trigger and IF Check succeeded
-      expect(runData["Trigger"][0].error).toBeUndefined();
-      expect(runData["IF Check"][0].error).toBeUndefined();
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain("### FAILED: Branch A");
+      expect(result.text).toContain("Classification: CONNECTION_ERROR");
+      expect(result.text).toContain("### FAILED: Branch B");
+      expect(result.text).toContain("Classification: CREDENTIALS_MISSING");
+      expect(result.text).toContain("- Passed: 2 nodes (Trigger, IF Check)");
+      expect(result.text).toContain("- Failed: 2 nodes (Branch A, Branch B)");
     });
   });
 
   describe("Slow node detection", () => {
-    it("should capture execution times for performance analysis", async () => {
-      const wf = await client.createWorkflow({
-        name: "Slow Workflow",
+    it("diagnose_execution flags a node slower than 10s on an otherwise clean run", async () => {
+      const created = await harness.callTool("create_workflow", {
+        name: "E2E Slow Node",
         nodes: [
-          { name: "Trigger", type: "n8n-nodes-base.manualTrigger", position: [250, 300] as [number, number], parameters: {} },
-          { name: "Fast Node", type: "n8n-nodes-base.set", position: [450, 300] as [number, number], parameters: {} },
-          { name: "Slow API", type: "n8n-nodes-base.httpRequest", position: [650, 300] as [number, number], parameters: {} },
+          { name: "Trigger", type: "n8n-nodes-base.manualTrigger", position: [250, 300], parameters: {} },
+          { name: "Fast Node", type: "n8n-nodes-base.set", position: [450, 300], parameters: {} },
+          { name: "Slow API", type: "n8n-nodes-base.httpRequest", position: [650, 300], parameters: {} },
         ],
         connections: {
           Trigger: { main: [[{ node: "Fast Node", type: "main", index: 0 }]] },
@@ -388,9 +366,10 @@ describe("E2E: Self-Healing Workflow Lifecycle", () => {
         },
         settings: { executionOrder: "v1" },
       });
+      const workflowId = workflowIdFrom(created.text);
 
-      mockServer.setExecutionBehavior((workflow) => ({
-        id: `exec-slow-${Date.now()}`,
+      mock.setExecutionBehavior((workflow) => ({
+        id: "exec-e2e-slow",
         finished: true,
         mode: "manual",
         startedAt: new Date().toISOString(),
@@ -404,25 +383,21 @@ describe("E2E: Self-Healing Workflow Lifecycle", () => {
             runData: {
               Trigger: [{ startTime: Date.now(), executionTime: 1, data: { main: [[{ json: {} }]] } }],
               "Fast Node": [{ startTime: Date.now(), executionTime: 5, data: { main: [[{ json: {} }]] } }],
-              "Slow API": [{ startTime: Date.now(), executionTime: 15000, data: { main: [[{ json: { data: "response" } }]] } }],
+              "Slow API": [
+                { startTime: Date.now(), executionTime: 15000, data: { main: [[{ json: { data: "response" } }]] } },
+              ],
             },
           },
         },
       }));
 
-      const { executionId } = await client.executeWorkflow(wf.id);
-      const execution = await client.getExecution(executionId, true);
+      await harness.callTool("execute_workflow", { workflowId });
+      const result = await harness.callTool("diagnose_execution", { executionId: "exec-e2e-slow" });
 
-      expect(execution.status).toBe("success");
-      const resultData = execution.data as Record<string, unknown>;
-      const runData = (resultData.resultData as Record<string, unknown>).runData as Record<
-        string,
-        Array<{ executionTime: number }>
-      >;
-
-      expect(runData["Trigger"][0].executionTime).toBeLessThan(100);
-      expect(runData["Fast Node"][0].executionTime).toBeLessThan(100);
-      expect(runData["Slow API"][0].executionTime).toBeGreaterThan(10000);
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain("- Failed: 0 nodes (none)");
+      expect(result.text).toContain("- Slow (>10s): Slow API (15000ms)");
+      expect(result.text).not.toContain("Fast Node (5ms)");
     });
   });
 });
