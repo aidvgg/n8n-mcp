@@ -1,5 +1,8 @@
 #!/usr/bin/env node
+import { createRequire } from "node:module";
 import dotenv from "dotenv";
+
+const packageJson = createRequire(import.meta.url)("../package.json") as { version: string };
 
 // Load environment variables from custom path if specified
 // This allows the MCP to be used from other projects with a separate .env file
@@ -64,7 +67,7 @@ const n8nClient = new N8nClient(config.n8nApiUrl, config.n8nApiKey, {
 
 // ============ CLAUDE DOCS ============
 
-const CLAUDE_DOCS = `# n8n-MCP — AI Tool Reference
+const CLAUDE_DOCS = `# n8n-MCP - AI Tool Reference
 
 You have access to an n8n workflow automation server through MCP (Model Context Protocol).
 Use the curl patterns below to list, create, execute, and manage n8n workflows.
@@ -79,7 +82,7 @@ Accept: application/json, text/event-stream
 
 ## How to call a tool
 
-Send a JSON-RPC request to the MCP endpoint. The response is in SSE format — parse the \`data:\` line.
+Send a JSON-RPC request to the MCP endpoint. The response is in SSE format - parse the \`data:\` line.
 
 \`\`\`bash
 curl -s -X POST "https://mcp.kratoslabs.agency/mcp" \\
@@ -196,12 +199,12 @@ The tool result is in \`result.content[0].text\` (usually a JSON string).
 
 ## Recommended workflow development cycle
 
-1. \`list_workflow_examples\` — find a similar pattern
-2. \`get_node_schema\` — check parameters for each node
-3. \`validate_workflow\` — verify definition before creating
-4. \`create_workflow\` — deploy it
-5. \`self_heal_workflow\` — test and get fix suggestions
-6. \`update_workflow\` — apply fixes
+1. \`list_workflow_examples\` - find a similar pattern
+2. \`get_node_schema\` - check parameters for each node
+3. \`validate_workflow\` - verify definition before creating
+4. \`create_workflow\` - deploy it
+5. \`self_heal_workflow\` - test and get fix suggestions
+6. \`update_workflow\` - apply fixes
 7. Repeat 5-6 until all nodes pass
 `;
 
@@ -210,7 +213,7 @@ The tool result is in \`result.content[0].text\` (usually a JSON string).
 function createServer(): McpServer {
   const server = new McpServer({
     name: "n8n-mcp-server",
-    version: "1.0.0",
+    version: packageJson.version,
   });
 
   registerTools(server, n8nClient);
@@ -347,14 +350,13 @@ function setupRoutes(app: Express): void {
   app.get("/health", (req: Request, res: Response) => {
     res.json({
       status: "ok",
-      n8n_url: config.n8nApiUrl,
       mode: "http",
-      version: "1.0.0",
+      version: packageJson.version,
       uptime: process.uptime(),
     });
   });
 
-  // Claude instructions endpoint — serves markdown that teaches Claude how to call MCP tools
+  // Claude instructions endpoint - serves markdown that teaches Claude how to call MCP tools
   app.get("/docs", (req: Request, res: Response) => {
     res.setHeader("Content-Type", "text/markdown; charset=utf-8");
     res.send(CLAUDE_DOCS);
