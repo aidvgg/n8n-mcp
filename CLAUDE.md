@@ -40,7 +40,7 @@ node dist/cloud-client.js https://mcp.kratoslabs.agency/mcp call search_nodes '{
 
 ## Development
 
-- `npm run dev` — Watch mode (server)
-- `npm run build` — Compile TypeScript
-- `bun test` — Run tests
-- `npm run typecheck` — Type check without emitting
+- `npm run dev` - Watch mode (server)
+- `npm run build` - Compile TypeScript
+- `bun test` - Run tests
+- `npm run typecheck` - Type check without emitting

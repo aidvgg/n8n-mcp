@@ -172,7 +172,7 @@ function validateWorkflowDefinition(
     }
   }
 
-  // 6. Validate connections — check that source and target nodes exist
+  // 6. Validate connections - check that source and target nodes exist
   for (const [sourceName, conn] of Object.entries(connections)) {
     if (!nodeNames.has(sourceName)) {
       issues.push({
@@ -446,33 +446,33 @@ function classifyError(nodeName: string, error: { message?: string; description?
   const msg = ((error.message || "") + " " + (error.description || "")).toLowerCase();
 
   if (msg.includes("credential") || msg.includes("authentication") || msg.includes("unauthorized") || msg.includes("401")) {
-    return `- Classification: CREDENTIALS_MISSING — Configure credentials for "${nodeName}" in n8n Settings → Credentials`;
+    return `- Classification: CREDENTIALS_MISSING - Configure credentials for "${nodeName}" in n8n Settings → Credentials`;
   }
   if (msg.includes("could not find property option") || msg.includes("property")) {
-    return `- Classification: WRONG_PARAMETER — A parameter value doesn't match the node's schema. Use get_node_schema to check valid options.`;
+    return `- Classification: WRONG_PARAMETER - A parameter value doesn't match the node's schema. Use get_node_schema to check valid options.`;
   }
   if (msg.includes("typeversion") || msg.includes("type version") || msg.includes("could not find node")) {
-    return `- Classification: WRONG_TYPE_VERSION — Node typeVersion may be incorrect. Use get_node_schema to find the correct version.`;
+    return `- Classification: WRONG_TYPE_VERSION - Node typeVersion may be incorrect. Use get_node_schema to find the correct version.`;
   }
   if (msg.includes("timeout") || msg.includes("timed out") || msg.includes("econnrefused")) {
-    return `- Classification: CONNECTION_ERROR — The target service is unreachable. Check URL, network, and service availability.`;
+    return `- Classification: CONNECTION_ERROR - The target service is unreachable. Check URL, network, and service availability.`;
   }
   if (msg.includes("rate limit") || msg.includes("429") || msg.includes("too many")) {
-    return `- Classification: RATE_LIMITED — Slow down requests or add a Wait node before this node.`;
+    return `- Classification: RATE_LIMITED - Slow down requests or add a Wait node before this node.`;
   }
   if (msg.includes("expression") || msg.includes("referenceerror") || msg.includes("typeerror")) {
-    return `- Classification: EXPRESSION_ERROR — An n8n expression failed. Check that referenced fields exist. Use get_expression_help for syntax.`;
+    return `- Classification: EXPRESSION_ERROR - An n8n expression failed. Check that referenced fields exist. Use get_expression_help for syntax.`;
   }
   if (msg.includes("json") || msg.includes("parse") || msg.includes("unexpected token")) {
-    return `- Classification: PARSE_ERROR — Response is not valid JSON. Check the URL or add a response format option.`;
+    return `- Classification: PARSE_ERROR - Response is not valid JSON. Check the URL or add a response format option.`;
   }
   if (msg.includes("404") || msg.includes("not found")) {
-    return `- Classification: NOT_FOUND — The requested resource/endpoint doesn't exist. Check URLs and IDs.`;
+    return `- Classification: NOT_FOUND - The requested resource/endpoint doesn't exist. Check URLs and IDs.`;
   }
   if (msg.includes("permission") || msg.includes("403") || msg.includes("forbidden")) {
-    return `- Classification: PERMISSION_DENIED — Insufficient permissions. Check API key scopes or user permissions.`;
+    return `- Classification: PERMISSION_DENIED - Insufficient permissions. Check API key scopes or user permissions.`;
   }
-  return `- Classification: UNKNOWN — Review the error message and node configuration.`;
+  return `- Classification: UNKNOWN - Review the error message and node configuration.`;
 }
 
 function generateFixPlan(workflow: Workflow, execution: Execution): string {
@@ -481,7 +481,7 @@ function generateFixPlan(workflow: Workflow, execution: Execution): string {
   const lastError = extractLastError(execution);
 
   if (execution.status === "success") {
-    lines.push("No fixes needed — all nodes executed successfully.");
+    lines.push("No fixes needed - all nodes executed successfully.");
     return lines.join("\n");
   }
 

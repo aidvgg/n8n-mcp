@@ -71,7 +71,7 @@ function mcpRequest(url: string, method: string, params: Record<string, unknown>
 function main(): void {
   const args = process.argv.slice(2);
 
-  // Parse URL — first arg if it looks like a URL, otherwise use env/default
+  // Parse URL - first arg if it looks like a URL, otherwise use env/default
   let url: string;
   let commandArgs: string[];
 

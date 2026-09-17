@@ -37,12 +37,12 @@ All notable changes to this project will be documented in this file.
 - OpenAI node: 1 → 1.1
 
 ### Added
-- AI Transform node — transform data using natural language instructions
-- Data Table node — display and manipulate data in table format
-- Evaluation node — evaluate AI model outputs for testing and benchmarking
-- Guardrails node — apply input/output guardrails for AI safety
-- Evaluation Trigger — trigger evaluation runs
-- MCP Server Trigger — expose workflows as MCP tools for AI agents
+- AI Transform node - transform data using natural language instructions
+- Data Table node - display and manipulate data in table format
+- Evaluation node - evaluate AI model outputs for testing and benchmarking
+- Guardrails node - apply input/output guardrails for AI safety
+- Evaluation Trigger - trigger evaluation runs
+- MCP Server Trigger - expose workflows as MCP tools for AI agents
 
 ### Fixed
 - Removed duplicate node entries (SSH, FTP, Email Send, Item Lists) between core.ts and integration files
@@ -51,14 +51,14 @@ All notable changes to this project will be documented in this file.
 ## [1.4.0] - 2026-03-13
 
 ### Added
-- `validate_workflow` tool — pre-creation validation that checks node types, required parameters, connection integrity, duplicate names, orphan nodes, credential types, position overlaps, and typeVersion mismatches
+- `validate_workflow` tool - pre-creation validation that checks node types, required parameters, connection integrity, duplicate names, orphan nodes, credential types, position overlaps, and typeVersion mismatches
 - 6 golden-path workflow examples with per-node annotations explaining configuration choices:
-  - `webhook-transform-respond` — API endpoint pattern
-  - `schedule-fetch-filter-notify` — scheduled data processing with filtering
-  - `manual-branch-merge` — IF branching with Merge node
-  - `error-handling-pattern` — error output handling with `continueErrorOutput`
-  - `loop-batch-processing` — Split In Batches loop with rate-limit delays
-  - `switch-multi-path` — multi-path routing with Switch node and fallback
+  - `webhook-transform-respond` - API endpoint pattern
+  - `schedule-fetch-filter-notify` - scheduled data processing with filtering
+  - `manual-branch-merge` - IF branching with Merge node
+  - `error-handling-pattern` - error output handling with `continueErrorOutput`
+  - `loop-batch-processing` - Split In Batches loop with rate-limit delays
+  - `switch-multi-path` - multi-path routing with Switch node and fallback
 - `list_workflow_examples` and `get_workflow_example` tools for discovering and retrieving examples
 - MCP resources `n8n://examples` and `n8n://examples/{name}` for direct resource access
 - New `src/examples.ts` module with `WorkflowExample` type definitions
