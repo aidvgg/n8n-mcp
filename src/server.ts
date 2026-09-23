@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 
 const packageJson = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -7,12 +10,13 @@ const packageJson = createRequire(import.meta.url)("../package.json") as { versi
 // Load environment variables from custom path if specified
 // This allows the MCP to be used from other projects with a separate .env file
 if (process.env.DOTENV_CONFIG_PATH) {
-  dotenv.config({ path: process.env.DOTENV_CONFIG_PATH });
+  dotenv.config({ path: process.env.DOTENV_CONFIG_PATH, quiet: true });
 } else {
-  dotenv.config(); // Default .env in current directory
+  dotenv.config({ quiet: true }); // Default .env in current directory
 }
 
-import express, { type Express, type Request, type Response } from "express";
+import { createHash, timingSafeEqual } from "node:crypto";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { rateLimit } from "express-rate-limit";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -27,9 +31,13 @@ const serverLogger = createChildLogger("server");
 
 // ============ CONFIGURATION ============
 
+/** Minimum length for MCP_AUTH_TOKEN. Shorter or unset means HTTP mode serves 503. */
+export const MIN_AUTH_TOKEN_LENGTH = 32;
+
 interface Config {
   n8nApiUrl: string;
   n8nApiKey: string;
+  mcpAuthToken: string;
   port: number;
   allowedOrigins: string[];
   nodeEnv: string;
@@ -41,6 +49,7 @@ function loadConfig(): Config {
   const config: Config = {
     n8nApiUrl: process.env.N8N_API_URL || "http://localhost:5678/api/v1",
     n8nApiKey: process.env.N8N_API_KEY || "",
+    mcpAuthToken: process.env.MCP_AUTH_TOKEN || "",
     port: parseInt(process.env.PORT || "3000", 10),
     allowedOrigins: (process.env.ALLOWED_ORIGINS || "").split(",").filter(Boolean),
     nodeEnv: process.env.NODE_ENV || "development",
@@ -58,6 +67,11 @@ function loadConfig(): Config {
 
 const config = loadConfig();
 const isStdioMode = process.argv.includes("--stdio");
+if (!isStdioMode && config.nodeEnv !== "test" && config.mcpAuthToken.length < MIN_AUTH_TOKEN_LENGTH) {
+  serverLogger.warn(
+    `MCP_AUTH_TOKEN is unset or shorter than ${MIN_AUTH_TOKEN_LENGTH} characters. /mcp and /docs will return 503 until it is set.`
+  );
+}
 
 // Create n8n client with production settings
 const n8nClient = new N8nClient(config.n8nApiUrl, config.n8nApiKey, {
@@ -70,7 +84,7 @@ const n8nClient = new N8nClient(config.n8nApiUrl, config.n8nApiKey, {
 const CLAUDE_DOCS = `# n8n-MCP - AI Tool Reference
 
 You have access to an n8n workflow automation server through MCP (Model Context Protocol).
-Use the curl patterns below to list, create, execute, and manage n8n workflows.
+Use the Bash helper below to list, create, execute, and manage n8n workflows.
 
 ## Base URL
 
@@ -78,53 +92,50 @@ Use the curl patterns below to list, create, execute, and manage n8n workflows.
 POST https://mcp.kratoslabs.agency/mcp
 Content-Type: application/json
 Accept: application/json, text/event-stream
+Authorization: Bearer $MCP_AUTH_TOKEN
 \`\`\`
+
+Every \`/mcp\` and \`/docs\` request needs the bearer token. Without it the server answers 401.
+If the operator has not set \`MCP_AUTH_TOKEN\` the server answers 503.
 
 ## How to call a tool
 
-Send a JSON-RPC request to the MCP endpoint. The response is in SSE format - parse the \`data:\` line.
+Send a JSON-RPC request to the MCP endpoint. The helper passes the token through curl's standard
+input, keeping it out of curl's process arguments. The response is in SSE format - parse the
+\`data:\` line. Disable shell tracing when handling credentials.
 
 \`\`\`bash
-curl -s -X POST "https://mcp.kratoslabs.agency/mcp" \\
-  -H "Content-Type: application/json" \\
-  -H "Accept: application/json, text/event-stream" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"TOOL_NAME","arguments":{ARGS}}}'
+mcp_curl() {
+  builtin printf 'header = "Authorization: Bearer %s"\\n' "$MCP_AUTH_TOKEN" |
+    curl --config - --silent --request POST "https://mcp.kratoslabs.agency/mcp" \\
+      --header "Content-Type: application/json" \\
+      --header "Accept: application/json, text/event-stream" "$@"
+}
+mcp_curl --data '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"TOOL_NAME","arguments":{ARGS}}}'
 \`\`\`
 
 ### Example: List all workflows
 
 \`\`\`bash
-curl -s -X POST "https://mcp.kratoslabs.agency/mcp" \\
-  -H "Content-Type: application/json" \\
-  -H "Accept: application/json, text/event-stream" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_workflows","arguments":{}}}'
+mcp_curl --data '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_workflows","arguments":{}}}'
 \`\`\`
 
 ### Example: Get a specific workflow
 
 \`\`\`bash
-curl -s -X POST "https://mcp.kratoslabs.agency/mcp" \\
-  -H "Content-Type: application/json" \\
-  -H "Accept: application/json, text/event-stream" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_workflow","arguments":{"workflowId":"YOUR_ID"}}}'
+mcp_curl --data '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_workflow","arguments":{"workflowId":"YOUR_ID"}}}'
 \`\`\`
 
 ### Example: Execute a workflow
 
 \`\`\`bash
-curl -s -X POST "https://mcp.kratoslabs.agency/mcp" \\
-  -H "Content-Type: application/json" \\
-  -H "Accept: application/json, text/event-stream" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_workflow","arguments":{"workflowId":"YOUR_ID"}}}'
+mcp_curl --data '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_workflow","arguments":{"workflowId":"YOUR_ID"}}}'
 \`\`\`
 
 ### Example: List available tools
 
 \`\`\`bash
-curl -s -X POST "https://mcp.kratoslabs.agency/mcp" \\
-  -H "Content-Type: application/json" \\
-  -H "Accept: application/json, text/event-stream" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+mcp_curl --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 \`\`\`
 
 ## Parsing responses
@@ -246,7 +257,7 @@ function createCorsOptions() {
     return {
       origin: config.allowedOrigins.length > 0 ? config.allowedOrigins : false,
       exposedHeaders: ["mcp-session-id"],
-      allowedHeaders: ["Content-Type", "mcp-session-id"],
+      allowedHeaders: ["Content-Type", "mcp-session-id", "Authorization"],
       credentials: true,
     };
   }
@@ -255,7 +266,7 @@ function createCorsOptions() {
   return {
     origin: true,
     exposedHeaders: ["mcp-session-id"],
-    allowedHeaders: ["Content-Type", "mcp-session-id"],
+    allowedHeaders: ["Content-Type", "mcp-session-id", "Authorization"],
   };
 }
 
@@ -299,7 +310,48 @@ function setupMiddleware(app: Express): void {
   app.use("/mcp", limiter);
 }
 
-function setupRoutes(app: Express): void {
+/**
+ * Bearer-token gate for every route that can reach the n8n API key held server-side.
+ * Fails closed: without a long enough MCP_AUTH_TOKEN the protected routes serve 503.
+ */
+export function createAuthMiddleware(token: string) {
+  const configured = token.length >= MIN_AUTH_TOKEN_LENGTH;
+  // Hashing gives two equal-length buffers, so timingSafeEqual never throws and
+  // never short-circuits on a length difference.
+  const expected = createHash("sha256").update(token).digest();
+
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!configured) {
+      res.status(503).json({
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32001,
+          message: "Server is not configured for authenticated access. Set MCP_AUTH_TOKEN.",
+        },
+      });
+      return;
+    }
+
+    const presented = /^Bearer (.+)$/.exec(req.headers.authorization || "")?.[1] || "";
+    if (!timingSafeEqual(createHash("sha256").update(presented).digest(), expected)) {
+      res.setHeader("WWW-Authenticate", "Bearer");
+      res.status(401).json({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32000, message: "Unauthorized. Send Authorization: Bearer <token>." },
+      });
+      return;
+    }
+
+    next();
+  };
+}
+
+function setupRoutes(app: Express, requireAuth: ReturnType<typeof createAuthMiddleware>): void {
+  // Every /mcp method and /docs is authenticated; /health stays open for liveness probes.
+  app.use("/mcp", requireAuth);
+
   // MCP endpoint - stateless mode
   app.post("/mcp", async (req: Request, res: Response) => {
     const requestId = Math.random().toString(36).slice(2, 11);
@@ -357,7 +409,7 @@ function setupRoutes(app: Express): void {
   });
 
   // Claude instructions endpoint - serves markdown that teaches Claude how to call MCP tools
-  app.get("/docs", (req: Request, res: Response) => {
+  app.get("/docs", requireAuth, (req: Request, res: Response) => {
     res.setHeader("Content-Type", "text/markdown; charset=utf-8");
     res.send(CLAUDE_DOCS);
   });
@@ -368,14 +420,22 @@ function setupRoutes(app: Express): void {
   });
 }
 
-async function startHttpServer(): Promise<() => Promise<void>> {
+/** Builds the fully wired Express app. The token argument keeps it testable in process. */
+export function createApp(authToken: string = config.mcpAuthToken): Express {
   const app = express();
 
   setupMiddleware(app);
-  setupRoutes(app);
+  setupRoutes(app, createAuthMiddleware(authToken));
 
+  return app;
+}
+
+const httpApp = createApp();
+export default httpApp;
+
+async function startHttpServer(): Promise<() => Promise<void>> {
   return new Promise((resolve) => {
-    const server = app.listen(config.port, () => {
+    const server = httpApp.listen(config.port, () => {
       serverLogger.info({
         port: config.port,
         n8nUrl: config.n8nApiUrl,
@@ -472,7 +532,10 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error) => {
-  serverLogger.fatal({ error: error.message }, "Fatal error during startup");
-  process.exit(1);
-});
+// Vercel imports the default Express app. Direct CLI launches still start a listener.
+if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(resolve(process.argv[1]))) {
+  main().catch((error) => {
+    serverLogger.fatal({ error: error.message }, "Fatal error during startup");
+    process.exit(1);
+  });
+}

@@ -17,7 +17,7 @@ Built on the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typesc
 - **Node catalogue** kept in sync with n8n `nodes-base` v2.14.0, including current `typeVersion` values for HTTP Request, Postgres, Slack, Gmail, OpenAI, and the newer AI nodes (AI Transform, Data Table, Guardrails, Evaluation, MCP Server Trigger).
 - **Golden-path examples** - annotated workflow templates for common patterns (webhook-transform-respond, schedule-fetch-filter-notify, error handling, batch loops).
 - **HTTP server hardening** - CORS allow-listing, rate limiting, security headers, structured logging via pino, and graceful shutdown.
-- **Cloud client** - a tiny CLI that talks to a remote MCP endpoint over curl, for environments where `claude mcp add` is unavailable.
+- **Cloud client** - a tiny CLI that talks to a remote MCP endpoint with Node's built-in HTTP client, for environments where `claude mcp add` is unavailable.
 
 ## Quick start
 
@@ -33,6 +33,7 @@ Create a `.env` file:
 ```env
 N8N_API_URL=https://your-n8n-instance.example.com/api/v1
 N8N_API_KEY=your-api-key-here
+MCP_AUTH_TOKEN=generate-with-openssl-rand-hex-32
 PORT=3000
 NODE_ENV=development
 ALLOWED_ORIGINS=https://claude.ai,https://cursor.sh
@@ -46,7 +47,13 @@ npm run start:stdio # stdio mode for local desktop clients
 npm run dev         # watch mode (bun)
 ```
 
-Health check:
+Generate the HTTP transport token once and keep it secret:
+
+```bash
+openssl rand -hex 32
+```
+
+Health check (the only endpoint that needs no token):
 
 ```bash
 curl http://localhost:3000/health
@@ -56,15 +63,31 @@ curl http://localhost:3000/health
 
 ### Claude Code, Cursor, VS Code (Streamable HTTP)
 
-Point your client at `http://localhost:3000/mcp` (or your deployed URL). For Claude Code:
+In HTTP mode every `/mcp` and `/docs` request must carry `Authorization: Bearer $MCP_AUTH_TOKEN`.
+Requests without a valid token get 401, and a server started without `MCP_AUTH_TOKEN` answers 503
+on those routes. Point your client at `http://localhost:3000/mcp` (or your deployed URL).
+For Claude Code, put this in your project's `.mcp.json`. Claude Code expands environment variables
+in HTTP headers, so the token stays out of the config file and the `claude mcp add` command line:
 
-```bash
-claude mcp add n8n https://your-deployment.example.com/mcp
+```json
+{
+  "mcpServers": {
+    "n8n": {
+      "type": "http",
+      "url": "https://your-deployment.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${MCP_AUTH_TOKEN}" }
+    }
+  }
+}
 ```
+
+Provide `MCP_AUTH_TOKEN` to the Claude Code process through your local secret manager before
+starting it. For Cursor and VS Code, use each client's supported secret or environment reference
+for the same header. Do not put the token itself in a checked-in config file or CLI argument.
 
 ### Claude Desktop (stdio)
 
-In `claude_desktop_config.json`:
+stdio mode runs as a local child process and needs no token. In `claude_desktop_config.json`:
 
 ```json
 {
@@ -91,7 +114,9 @@ node dist/cloud-client.js https://your-deployment.example.com/mcp call list_work
 node dist/cloud-client.js https://your-deployment.example.com/mcp call execute_workflow '{"workflowId":"123"}'
 ```
 
-The default URL can be overridden with the `MCP_SERVER_URL` environment variable.
+The default URL can be overridden with the `MCP_SERVER_URL` environment variable. `MCP_AUTH_TOKEN`
+is required; provide it through your cloud session's secret settings. The client sends it as the
+bearer token without placing it in a shell command.
 
 ## Available tools
 
@@ -166,6 +191,7 @@ The default URL can be overridden with the `MCP_SERVER_URL` environment variable
 |----------|---------|-------------|
 | `N8N_API_URL` | `http://localhost:5678/api/v1` | n8n REST API base URL |
 | `N8N_API_KEY` | _(required)_ | n8n API key |
+| `MCP_AUTH_TOKEN` | _(required in HTTP mode)_ | Bearer token for `/mcp` and `/docs`. Minimum 32 characters; without it those routes return 503. Not used in stdio mode. |
 | `PORT` | `3000` | HTTP server port |
 | `NODE_ENV` | `development` | In `production`, CORS requires `ALLOWED_ORIGINS` |
 | `ALLOWED_ORIGINS` | _(empty)_ | Comma-separated CORS allow-list |
@@ -177,10 +203,10 @@ The default URL can be overridden with the `MCP_SERVER_URL` environment variable
 
 | Path | Method | Purpose |
 |------|--------|---------|
-| `/mcp` | POST | MCP JSON-RPC (Streamable HTTP) |
-| `/mcp` | DELETE | Session cleanup acknowledgment |
-| `/health` | GET | Liveness check with uptime and n8n target |
-| `/docs` | GET | Markdown reference designed for AI agents calling the server via curl |
+| `/mcp` | POST | MCP JSON-RPC (Streamable HTTP). Bearer token required. |
+| `/mcp` | DELETE | Session cleanup acknowledgment. Bearer token required. |
+| `/health` | GET | Liveness check with status, mode, version and uptime. No token. |
+| `/docs` | GET | Markdown reference for AI agents calling the server via curl. Bearer token required. |
 
 ## Development
 

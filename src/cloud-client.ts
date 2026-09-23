@@ -3,7 +3,7 @@
  * Lightweight CLI client for calling MCP tools on a remote Streamable HTTP server.
  * Designed for use in Claude Cloud sessions where `claude mcp add` is unavailable.
  *
- * Uses curl under the hood for maximum compatibility across environments.
+ * Uses Node's built-in fetch so the bearer token stays out of shell arguments.
  *
  * Usage:
  *   node dist/cloud-client.js [url] list-tools
@@ -11,8 +11,6 @@
  *
  * The URL can also be set via MCP_SERVER_URL env var.
  */
-import { execSync } from "node:child_process";
-
 const DEFAULT_URL = "https://mcp.kratoslabs.agency/mcp";
 
 function usage(): never {
@@ -20,7 +18,8 @@ function usage(): never {
   cloud-client [url] list-tools
   cloud-client [url] call <tool_name> ['<json_args>']
 
-URL defaults to MCP_SERVER_URL env var or ${DEFAULT_URL}`);
+URL defaults to MCP_SERVER_URL env var or ${DEFAULT_URL}
+MCP_AUTH_TOKEN must be set; it is sent as an Authorization: Bearer header.`);
   process.exit(1);
 }
 
@@ -31,7 +30,7 @@ interface JsonRpcResponse {
   error?: { code: number; message: string };
 }
 
-function mcpRequest(url: string, method: string, params: Record<string, unknown> = {}): unknown {
+async function mcpRequest(url: string, method: string, params: Record<string, unknown> = {}): Promise<unknown> {
   const body = JSON.stringify({
     jsonrpc: "2.0",
     id: 1,
@@ -39,36 +38,47 @@ function mcpRequest(url: string, method: string, params: Record<string, unknown>
     params,
   });
 
-  const output = execSync(
-    `curl -s -X POST '${url}' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '${body.replace(/'/g, "'\\''")}'`,
-    { encoding: "utf-8", timeout: 60000 }
-  );
+  const token = process.env.MCP_AUTH_TOKEN || "";
+  if (!token) {
+    throw new Error("MCP_AUTH_TOKEN is not set, and the remote MCP endpoint requires a bearer token");
+  }
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${token}`,
+      },
+      body,
+      signal: AbortSignal.timeout(60000),
+      redirect: "error",
+    });
+  } catch {
+    throw new Error("MCP request failed before receiving a response");
+  }
+  if (!response.ok) {
+    throw new Error(`MCP endpoint returned HTTP ${response.status}`);
+  }
+
+  const output = await response.text();
 
   // Parse SSE response: "event: message\ndata: {...}"
-  const lines = output.trim().split("\n");
-  for (const line of lines) {
-    if (line.startsWith("data: ")) {
-      const response: JsonRpcResponse = JSON.parse(line.slice(6));
-      if (response.error) {
-        throw new Error(`MCP error ${response.error.code}: ${response.error.message}`);
-      }
-      return response.result;
-    }
-  }
-
-  // Try parsing as direct JSON (non-SSE response)
+  const dataLine = output.split(/\r?\n/).find((line) => line.startsWith("data:"));
+  let result: JsonRpcResponse;
   try {
-    const response: JsonRpcResponse = JSON.parse(output.trim());
-    if (response.error) {
-      throw new Error(`MCP error ${response.error.code}: ${response.error.message}`);
-    }
-    return response.result;
+    result = JSON.parse(dataLine ? dataLine.slice(5).trim() : output.trim());
   } catch {
-    throw new Error(`Unexpected response: ${output.slice(0, 200)}`);
+    throw new Error("Unexpected response from MCP endpoint");
   }
+  if (result.error) {
+    throw new Error(`MCP error ${result.error.code}: ${result.error.message}`);
+  }
+  return result.result;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
   // Parse URL - first arg if it looks like a URL, otherwise use env/default
@@ -87,7 +97,7 @@ function main(): void {
   if (!command) usage();
 
   if (command === "list-tools") {
-    const result = mcpRequest(url, "tools/list") as { tools: Array<{ name: string; description: string }> };
+    const result = await mcpRequest(url, "tools/list") as { tools: Array<{ name: string; description: string }> };
     const summary = result.tools.map((t) => ({
       name: t.name,
       description: t.description,
@@ -111,7 +121,7 @@ function main(): void {
       }
     }
 
-    const result = mcpRequest(url, "tools/call", { name: toolName, arguments: parsedArgs });
+    const result = await mcpRequest(url, "tools/call", { name: toolName, arguments: parsedArgs });
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.error(`Unknown command: ${command}`);
@@ -119,9 +129,9 @@ function main(): void {
   }
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(`Error: ${(error as Error).message}`);
+main().catch((error) => {
+  const token = process.env.MCP_AUTH_TOKEN || "";
+  const message = (error as Error).message;
+  console.error(`Error: ${token ? message.replaceAll(token, "[redacted]") : message}`);
   process.exit(1);
-}
+});

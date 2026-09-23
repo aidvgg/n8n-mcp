@@ -8,6 +8,10 @@ This project includes a cloud client for calling n8n MCP tools from Claude Cloud
 npm run build
 ```
 
+The remote endpoint requires a bearer token. `MCP_AUTH_TOKEN` must contain the server's existing
+token or the cloud client exits with an error; an unauthenticated request receives 401. Provide the
+token through the session's secret settings. Do not paste it into a shell command or repository file.
+
 ## Usage
 
 ### List available tools
