@@ -84,7 +84,7 @@ const n8nClient = new N8nClient(config.n8nApiUrl, config.n8nApiKey, {
 const CLAUDE_DOCS = `# n8n-MCP - AI Tool Reference
 
 You have access to an n8n workflow automation server through MCP (Model Context Protocol).
-Use the curl patterns below to list, create, execute, and manage n8n workflows.
+Use the Bash helper below to list, create, execute, and manage n8n workflows.
 
 ## Base URL
 
@@ -100,54 +100,42 @@ If the operator has not set \`MCP_AUTH_TOKEN\` the server answers 503.
 
 ## How to call a tool
 
-Send a JSON-RPC request to the MCP endpoint. The response is in SSE format - parse the \`data:\` line.
+Send a JSON-RPC request to the MCP endpoint. The helper passes the token through curl's standard
+input, keeping it out of curl's process arguments. The response is in SSE format - parse the
+\`data:\` line. Disable shell tracing when handling credentials.
 
 \`\`\`bash
-curl -s -X POST "https://mcp.kratoslabs.agency/mcp" \\
-  -H "Content-Type: application/json" \\
-  -H "Accept: application/json, text/event-stream" \\
-  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"TOOL_NAME","arguments":{ARGS}}}'
+mcp_curl() {
+  builtin printf 'header = "Authorization: Bearer %s"\\n' "$MCP_AUTH_TOKEN" |
+    curl --config - --silent --request POST "https://mcp.kratoslabs.agency/mcp" \\
+      --header "Content-Type: application/json" \\
+      --header "Accept: application/json, text/event-stream" "$@"
+}
+mcp_curl --data '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"TOOL_NAME","arguments":{ARGS}}}'
 \`\`\`
 
 ### Example: List all workflows
 
 \`\`\`bash
-curl -s -X POST "https://mcp.kratoslabs.agency/mcp" \\
-  -H "Content-Type: application/json" \\
-  -H "Accept: application/json, text/event-stream" \\
-  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_workflows","arguments":{}}}'
+mcp_curl --data '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_workflows","arguments":{}}}'
 \`\`\`
 
 ### Example: Get a specific workflow
 
 \`\`\`bash
-curl -s -X POST "https://mcp.kratoslabs.agency/mcp" \\
-  -H "Content-Type: application/json" \\
-  -H "Accept: application/json, text/event-stream" \\
-  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_workflow","arguments":{"workflowId":"YOUR_ID"}}}'
+mcp_curl --data '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_workflow","arguments":{"workflowId":"YOUR_ID"}}}'
 \`\`\`
 
 ### Example: Execute a workflow
 
 \`\`\`bash
-curl -s -X POST "https://mcp.kratoslabs.agency/mcp" \\
-  -H "Content-Type: application/json" \\
-  -H "Accept: application/json, text/event-stream" \\
-  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_workflow","arguments":{"workflowId":"YOUR_ID"}}}'
+mcp_curl --data '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_workflow","arguments":{"workflowId":"YOUR_ID"}}}'
 \`\`\`
 
 ### Example: List available tools
 
 \`\`\`bash
-curl -s -X POST "https://mcp.kratoslabs.agency/mcp" \\
-  -H "Content-Type: application/json" \\
-  -H "Accept: application/json, text/event-stream" \\
-  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+mcp_curl --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 \`\`\`
 
 ## Parsing responses

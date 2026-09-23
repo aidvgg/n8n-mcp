@@ -16,7 +16,7 @@ Built on the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typesc
 - **Node catalogue** kept in sync with n8n `nodes-base` v2.14.0, including current `typeVersion` values for HTTP Request, Postgres, Slack, Gmail, OpenAI, and the newer AI nodes (AI Transform, Data Table, Guardrails, Evaluation, MCP Server Trigger).
 - **Golden-path examples** - annotated workflow templates for common patterns (webhook-transform-respond, schedule-fetch-filter-notify, error handling, batch loops).
 - **HTTP server hardening** - CORS allow-listing, rate limiting, security headers, structured logging via pino, and graceful shutdown.
-- **Cloud client** - a tiny CLI that talks to a remote MCP endpoint over curl, for environments where `claude mcp add` is unavailable.
+- **Cloud client** - a tiny CLI that talks to a remote MCP endpoint with Node's built-in HTTP client, for environments where `claude mcp add` is unavailable.
 
 ## Quick start
 
@@ -64,14 +64,9 @@ curl http://localhost:3000/health
 
 In HTTP mode every `/mcp` and `/docs` request must carry `Authorization: Bearer $MCP_AUTH_TOKEN`.
 Requests without a valid token get 401, and a server started without `MCP_AUTH_TOKEN` answers 503
-on those routes. Point your client at `http://localhost:3000/mcp` (or your deployed URL). For Claude Code:
-
-```bash
-claude mcp add --transport http n8n https://your-deployment.example.com/mcp \
-  --header "Authorization: Bearer $MCP_AUTH_TOKEN"
-```
-
-For clients configured through JSON, add the same header:
+on those routes. Point your client at `http://localhost:3000/mcp` (or your deployed URL).
+For Claude Code, put this in your project's `.mcp.json`. Claude Code expands environment variables
+in HTTP headers, so the token stays out of the config file and the `claude mcp add` command line:
 
 ```json
 {
@@ -79,11 +74,15 @@ For clients configured through JSON, add the same header:
     "n8n": {
       "type": "http",
       "url": "https://your-deployment.example.com/mcp",
-      "headers": { "Authorization": "Bearer your-token-here" }
+      "headers": { "Authorization": "Bearer ${MCP_AUTH_TOKEN}" }
     }
   }
 }
 ```
+
+Provide `MCP_AUTH_TOKEN` to the Claude Code process through your local secret manager before
+starting it. For Cursor and VS Code, use each client's supported secret or environment reference
+for the same header. Do not put the token itself in a checked-in config file or CLI argument.
 
 ### Claude Desktop (stdio)
 
@@ -109,14 +108,14 @@ stdio mode runs as a local child process and needs no token. In `claude_desktop_
 Use the bundled cloud client to call tools directly:
 
 ```bash
-export MCP_AUTH_TOKEN=your-token-here
 node dist/cloud-client.js https://your-deployment.example.com/mcp list-tools
 node dist/cloud-client.js https://your-deployment.example.com/mcp call list_workflows '{}'
 node dist/cloud-client.js https://your-deployment.example.com/mcp call execute_workflow '{"workflowId":"123"}'
 ```
 
 The default URL can be overridden with the `MCP_SERVER_URL` environment variable. `MCP_AUTH_TOKEN`
-is required; the client sends it as the bearer token.
+is required; provide it through your cloud session's secret settings. The client sends it as the
+bearer token without placing it in a shell command.
 
 ## Available tools
 
