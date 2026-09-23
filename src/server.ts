@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 
 const packageJson = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -7,9 +10,9 @@ const packageJson = createRequire(import.meta.url)("../package.json") as { versi
 // Load environment variables from custom path if specified
 // This allows the MCP to be used from other projects with a separate .env file
 if (process.env.DOTENV_CONFIG_PATH) {
-  dotenv.config({ path: process.env.DOTENV_CONFIG_PATH });
+  dotenv.config({ path: process.env.DOTENV_CONFIG_PATH, quiet: true });
 } else {
-  dotenv.config(); // Default .env in current directory
+  dotenv.config({ quiet: true }); // Default .env in current directory
 }
 
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -64,6 +67,11 @@ function loadConfig(): Config {
 
 const config = loadConfig();
 const isStdioMode = process.argv.includes("--stdio");
+if (!isStdioMode && config.nodeEnv !== "test" && config.mcpAuthToken.length < MIN_AUTH_TOKEN_LENGTH) {
+  serverLogger.warn(
+    `MCP_AUTH_TOKEN is unset or shorter than ${MIN_AUTH_TOKEN_LENGTH} characters. /mcp and /docs will return 503 until it is set.`
+  );
+}
 
 // Create n8n client with production settings
 const n8nClient = new N8nClient(config.n8nApiUrl, config.n8nApiKey, {
@@ -434,17 +442,12 @@ export function createApp(authToken: string = config.mcpAuthToken): Express {
   return app;
 }
 
+const httpApp = createApp();
+export default httpApp;
+
 async function startHttpServer(): Promise<() => Promise<void>> {
-  if (config.mcpAuthToken.length < MIN_AUTH_TOKEN_LENGTH) {
-    serverLogger.warn(
-      `MCP_AUTH_TOKEN is unset or shorter than ${MIN_AUTH_TOKEN_LENGTH} characters. /mcp and /docs will return 503 until it is set.`
-    );
-  }
-
-  const app = createApp();
-
   return new Promise((resolve) => {
-    const server = app.listen(config.port, () => {
+    const server = httpApp.listen(config.port, () => {
       serverLogger.info({
         port: config.port,
         n8nUrl: config.n8nApiUrl,
@@ -541,9 +544,8 @@ async function main(): Promise<void> {
   }
 }
 
-// Start on import as well as on direct launch: serverless hosts import this module
-// instead of executing it. Only the test runner (NODE_ENV=test) imports without starting.
-if (config.nodeEnv !== "test") {
+// Vercel imports the default Express app. Direct CLI launches still start a listener.
+if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(resolve(process.argv[1]))) {
   main().catch((error) => {
     serverLogger.fatal({ error: error.message }, "Fatal error during startup");
     process.exit(1);

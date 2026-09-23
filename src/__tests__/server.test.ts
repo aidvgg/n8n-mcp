@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { spawnSync } from "node:child_process";
 import type { Server } from "node:http";
 import type { Express } from "express";
-import { createApp } from "../server.js";
+import serverlessApp, { createApp } from "../server.js";
 
 const TOKEN = "a".repeat(40);
 
@@ -117,5 +118,35 @@ describe("HTTP transport authentication", () => {
     const res = await fetch(`${authed.url}/unknown`);
     expect(res.status).toBe(404);
     expect((await res.json()).error).toBe("Not found");
+  });
+});
+
+describe("serverless entrypoint", () => {
+  it("exports an Express handler for Vercel", async () => {
+    expect(typeof serverlessApp).toBe("function");
+    const server = await listen(serverlessApp);
+    try {
+      const res = await fetch(`${server.url}/health`);
+      expect(res.status).toBe(200);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("stdio entrypoint", () => {
+  it("writes only MCP messages to stdout", () => {
+    const request = {
+      jsonrpc: "2.0", id: 1, method: "initialize",
+      params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } },
+    };
+    const result = spawnSync("node", ["dist/server.js", "--stdio"], {
+      input: `${JSON.stringify(request)}\n`,
+      encoding: "utf8",
+      timeout: 3000,
+      env: { PATH: process.env.PATH || "", NODE_ENV: "production", DOTENV_CONFIG_PATH: "/dev/null", N8N_API_KEY: "test", LOG_LEVEL: "silent" },
+    });
+    const firstLine = result.stdout.trim().split("\n")[0];
+    expect(JSON.parse(firstLine).jsonrpc).toBe("2.0");
   });
 });
